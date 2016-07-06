@@ -54,7 +54,7 @@ transformed data {
 
 parameters {
   real<lower=0.0> sigma;
-  real<lower=0.0> Cp;
+  real<lower=0.0> C;
   real<lower=0.0> p;
   real<lower=0.0> em;
 }
@@ -106,22 +106,24 @@ data {
 
 parameters {
   real alpha;
-  real beta;
+  real beta1;
+  real beta2;
   real<lower=0> sigma;
 }
 
 model {
-  for (n in 2:N)
-      y[n] ~ normal(alpha + beta * y[n-1], sigma);
+  for (n in 3:N)
+      y[n] ~ normal(alpha + beta1 * y[n - 1] + beta2 * y[n - 2], sigma);
 }
 
 generated quantities {
   real yhat[N];
 
   yhat[1] <- y[1];
+  yhat[2] <- y[2];
 
-  for (n in 2:N)
-    yhat[n] <- normal_rng(alpha + beta * yhat[n - 1], sigma);
+  for (n in 3:N)
+    yhat[n] <- alpha + beta1 * yhat[n - 1] + beta2 * yhat[n - 2];//normal_rng(, sigma);
 }
 """
 
@@ -132,36 +134,32 @@ sm = pystan.StanModel(model_code = model_code)
 model_code = """
 data {
   int<lower=3> T; // number of observations
-  vector[T] y;
-  // observation at time T
+  real<lower=0.0> y[T]; // observation at time T
 }
 
 parameters {
   real mu; // mean
   real<lower=0> sigma; // error scale
-  vector[2] theta; // lag coefficients
+  vector[1] theta; // lag coefficients
 }
 
 transformed parameters {
   vector[T] epsilon; // error terms
   epsilon[1] <- y[1] - mu;
-  epsilon[2] <- y[2] - mu - theta[1] * epsilon[1];
 
-  for (t in 3:T)
+  for (t in 2:T)
     epsilon[t] <- ( y[t] - mu
-    - theta[1] * epsilon[t - 1]
-    - theta[2] * epsilon[t - 2] );
+    - theta[1] * epsilon[t - 1] );
 }
 
 model {
-  mu ~ cauchy(0,2.5);
-  theta ~ cauchy(0,2.5);
-  sigma ~ cauchy(0,2.5);
+  mu ~ cauchy(0, 2.5);
+  theta ~ cauchy(0, 2.5);
+  sigma ~ cauchy(0, 2.5);
 
-  for (t in 3:T)
+  for (t in 2:T)
     y[t] ~ normal(mu
-      + theta[1] * epsilon[t - 1]
-      + theta[2] * epsilon[t - 2],
+      + theta[1] * epsilon[t - 1],
       sigma);
 }
 
@@ -169,13 +167,10 @@ generated quantities {
   real yhat[T];
 
   yhat[1] <- y[1];
-  yhat[2] <- y[2];
 
-  for (t in 3:T)
-    yhat[t] <- normal_rng(mu
-      + theta[1] * epsilon[t - 1]
-      + theta[2] * epsilon[t - 2],
-      sigma);
+  for (t in 2:T)
+    yhat[t] <- mu
+      + theta[1] * epsilon[t - 1];//normal_rng(, sigma);
 }
 """
 
@@ -195,8 +190,8 @@ print fit
 #%%
 
 fit = sm.sampling(data = {
-    'N' : len(ys) + 1,
-    'y' : [0.0] + list(ys),
+    'N' : len(ys) + 2,
+    'y' : [0.0, 0.0] + list(ys),
 })
 
 print fit
@@ -217,7 +212,46 @@ y2s = fit.extract()['yhat'][2000:]
 
 plt.plot(xs, ys, '*')
 
-for i in numpy.random.choice(range(2000), 50):
-    plt.plot(xs, y2s[i, 1:])
+for i in numpy.random.choice(range(2000), 10):
+    #print 'b1', fit.extract()['beta1'][i]
+    #print 'b2', fit.extract()['beta2'][i]
+    plt.plot(xs, y2s[i, :])
 
 plt.show()
+
+#%%
+
+import matplotlib.pyplot as plt
+import pandas
+import seaborn
+
+Cs = fit.extract()['C'][3500:]
+ps = fit.extract()['p'][3500:]
+ems = fit.extract()['em'][3500:]
+
+df = pandas.DataFrame({ 'C' : Cs, 'p' : ps, 'em' : ems })
+
+ags = None
+kags = None
+
+def plot_scatter(*args, **kwargs):
+    global ags
+    global kags
+
+    ags = args
+    kags = kwargs
+
+    plt.plot(*(list(ags) + ['*']), **kwargs)
+
+g = seaborn.PairGrid(data = df)
+g = g.map_diag(plt.hist)
+g = g.map_offdiag(plot_scatter)
+plt.gcf().set_size_inches((10, 8))
+plt.show()
+
+#%%
+iris = seaborn.load_dataset("iris")
+g = seaborn.PairGrid(iris, hue="species")
+g = g.map_diag(plt.hist)
+g = g.map_offdiag(seaborn.histplot)
+g = g.add_legend()
