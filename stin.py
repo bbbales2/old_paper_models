@@ -100,7 +100,6 @@ generated quantities {
 """
 
 m = pystan.StanModel(model_code = model_code)
-
 #%%
 
 fit = m.sampling(data = {

@@ -42,7 +42,7 @@ functions {
 
 data {
   int<lower=1> T;
-  real y[T];
+  real<lower=0.0> y[T];
   real ts[T];
   real t0;
 }
@@ -74,7 +74,7 @@ model {
   sigma ~ cauchy(0, 2.5);
 
   C ~ normal(0.0, 10.0);
-  p ~ normal(0.0, 10000.0);
+  p ~ normal(0.0, 100000.0);
   em ~ normal(0.0, 1.0);
   y0[1] <- 0.0;
 
@@ -207,16 +207,21 @@ print fit
 
 #%%
 
-y0s = [0] * 2000#fit.extract()['y0'][2000:]
-y2s = fit.extract()['yhat'][2000:]
+y0s = [0] * 500#fit.extract()['y0'][2000:]
+y2s = fit.extract()['yhat'][3500:]
 
 plt.plot(xs, ys, '*')
 
-for i in numpy.random.choice(range(2000), 10):
+idxs = numpy.random.choice(range(500), 10)
+
+for i in idxs:
     #print 'b1', fit.extract()['beta1'][i]
     #print 'b2', fit.extract()['beta2'][i]
     plt.plot(xs, y2s[i, :])
 
+plt.ylabel('Elongation (%)', fontsize = 20)
+plt.xlabel('Time (hrs)', fontsize = 20)
+plt.gcf().set_size_inches((12, 9))
 plt.show()
 
 #%%
@@ -229,7 +234,9 @@ Cs = fit.extract()['C'][3500:]
 ps = fit.extract()['p'][3500:]
 ems = fit.extract()['em'][3500:]
 
-df = pandas.DataFrame({ 'C' : Cs, 'p' : ps, 'em' : ems })
+labels = [['samples', 'plotted'][i in idxs] for i in range(500)]
+
+df = pandas.DataFrame({ 'C' : Cs, 'p' : ps, 'em' : ems, 'labels' : labels })
 
 ags = None
 kags = None
@@ -243,10 +250,10 @@ def plot_scatter(*args, **kwargs):
 
     plt.plot(*(list(ags) + ['*']), **kwargs)
 
-g = seaborn.PairGrid(data = df)
+g = seaborn.PairGrid(data = df, hue = 'labels', palette = reversed(seaborn.color_palette("Set1", 8)[0:2]))
 g = g.map_diag(plt.hist)
 g = g.map_offdiag(plot_scatter)
-plt.gcf().set_size_inches((10, 8))
+plt.gcf().set_size_inches((12, 9))
 plt.show()
 
 #%%
