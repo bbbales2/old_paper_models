@@ -10,13 +10,15 @@ import pandas
 
 os.chdir('/home/bbales2/old_paper_modeling')
 
-data1 = scipy.io.loadmat('jackie/CreepInfo_75MPa_corr.mat')['CreepInfo_075corr']
-data2 = scipy.io.loadmat('jackie/CreepInfo_90MPa_corr_NoBlip.mat')['CreepInfo_090corr_NoBlip']
-data3 = scipy.io.loadmat('jackie/CreepInfo_105MPa_corr.mat')['CreepInfo_105corr']
+data1 = scipy.io.loadmat('jackie/CreepInfo_75MPa_corr.mat')['CreepInfo_075corr'][::20]
+data2 = scipy.io.loadmat('jackie/CreepInfo_90MPa_corr_NoBlip.mat')['CreepInfo_090corr_NoBlip'][::20]
+data3 = scipy.io.loadmat('jackie/CreepInfo_105MPa_corr.mat')['CreepInfo_105corr'][::20]
+
+data1[:, 0] /= 100000.0
+data2[:, 0] /= 100000.0
+data3[:, 0] /= 100000.0
 
 data = numpy.concatenate((data1, data2, data3), axis = 0)
-
-data[:, 0] /= 1.0
 
 plt.plot(data[:, 0], data[:, 1])
 plt.show()
@@ -98,6 +100,90 @@ fit = sm.sampling(data = {
 #%%
 r = fit.extract()
 #%%
+model_code = """
+data {
+  int<lower=1> T;
+  real<lower=0> y[T];
+  vector<lower=0>[T] x;
+}
+
+transformed data {
+  real log_unif;
+  log_unif <- -log(T);
+}
+
+parameters {
+  real<lower=0> C;
+  real<lower=0> p;
+  real<lower=0.0> sigma1;
+
+  real<lower=0> a;
+  real<lower=0> b;
+  real<lower=0.0> sigma2;
+}
+
+transformed parameters {
+  vector[T] lp;
+
+  lp <- rep_vector(log_unif, T);
+
+  for (s in 1:T)
+  {
+    //lp[s] <- lp[s] + normal_log(y[1:s], C * (x[1:s] / p) ./ (1 + x[1:s] / p), sigma1);
+    //lp[s] <- lp[s] + normal_log(y[s:], a * x[s:] + b, sigma2);
+
+    for (t in 1:T)
+    {
+      if(t < s)
+      {
+        lp[s] <- lp[s] + normal_log(y[t], C * (x[t] / p) / (1 + x[t] / p), sigma1);//C * x[t] + p
+      }
+      else
+      {
+        lp[s] <- lp[s] + normal_log(y[t], a * x[t] + b, sigma2);
+      }
+    }
+  }
+}
+
+model {
+  C ~ normal(0.0, 1.0);
+  p ~ normal(0.0, 1.0);
+  sigma1 ~ normal(0.0, 1.0);
+
+  a ~ normal(0.0, 1.0);
+  b ~ normal(0.0, 1.0);
+  sigma2 ~ normal(0.0, 1.0);
+
+  increment_log_prob(log_sum_exp(lp));
+}
+
+generated quantities {
+  vector[T] yhat1;
+  vector[T] yhat2;
+
+  yhat1 <- C * (x / p) ./ (1 + x / p);
+  yhat2 <- a * x + b;
+}
+"""
+
+sm = pystan.StanModel(model_code = model_code)
+#%%
+
+fit = sm.sampling(data = {
+  'T' : len(data1),
+  'x' : data1[:, 0],
+  'y' : data1[:, 1]
+  })
+
+print fit
+#%%
+plt.plot(data1[:, 0], data1[:, 1])
+plt.plot(data1[:, 0], fit.extract()['yhat1'][2500, :], 'g')
+plt.plot(data1[:, 0], fit.extract()['yhat2'][2500, :], 'r')
+plt.show()
+
+#%%
 
 yhat = fit.extract()['yhat']
 
@@ -128,6 +214,18 @@ for i in idxs:
 
 plt.show()
 
+#%%
+seaborn.distplot(r['a'][2000:, 0], kde = False, fit = scipy.stats.norm)
+plt.xlabel('Slope of first section')
+plt.show()
+
+seaborn.distplot(r['a'][2000:, 1], kde = False, fit = scipy.stats.norm)
+plt.xlabel('Slope of second section')
+plt.show()
+
+seaborn.distplot(r['a'][2000:, 2], kde = False, fit = scipy.stats.norm)
+plt.xlabel('Slope of third section')
+plt.show()
 #%%
 
 r = fit.extract()
