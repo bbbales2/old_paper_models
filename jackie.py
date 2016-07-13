@@ -115,17 +115,20 @@ transformed data {
 parameters {
   real<lower=0> C;
   real<lower=0> p;
-  real<lower=0.0> sigma1;
+  real<lower=0> em;
 
   real<lower=0> a;
   real<lower=0> b;
-  real<lower=0.0> sigma2;
+
+  real<lower=0.0> sigma;
 }
 
 transformed parameters {
   vector[T] lp;
 
-  lp <- rep_vector(log_unif, T);
+  //lp <- rep_vector(log_unif, T);
+  for (t in 1:T)
+    lp[t] <- normal_log(t, 51.0, 10.0);
 
   for (s in 1:T)
   {
@@ -136,24 +139,25 @@ transformed parameters {
     {
       if(t < s)
       {
-        lp[s] <- lp[s] + normal_log(y[t], C * (x[t] / p) / (1 + x[t] / p), sigma1);//C * x[t] + p
+        lp[s] <- lp[s] + normal_log(y[t], C * (x[t] / p) / (1 + x[t] / p), sigma);//C * x[t] + p
       }
       else
       {
-        lp[s] <- lp[s] + normal_log(y[t], a * x[t] + b, sigma2);
+        lp[s] <- lp[s] + normal_log(y[t], a * x[t] + b, sigma);
       }
     }
   }
 }
 
 model {
-  C ~ normal(0.0, 1.0);
-  p ~ normal(0.0, 1.0);
-  sigma1 ~ normal(0.0, 1.0);
+  C ~ uniform(0.0, 1.0);
+  p ~ uniform(0.0, 10.0);
+  em ~ uniform(0.0, 1.0);
 
-  a ~ normal(0.0, 1.0);
-  b ~ normal(0.0, 1.0);
-  sigma2 ~ normal(0.0, 1.0);
+  a ~ uniform(0.0, 1.0);
+  b ~ uniform(0.0, 1.0);
+
+  sigma ~ normal(0.0, 1.0);
 
   increment_log_prob(log_sum_exp(lp));
 }
@@ -161,14 +165,16 @@ model {
 generated quantities {
   vector[T] yhat1;
   vector[T] yhat2;
+  int<lower=1,upper=T> s;
 
   yhat1 <- C * (x / p) ./ (1 + x / p);
   yhat2 <- a * x + b;
+  s <- categorical_rng(softmax(lp));
 }
 """
 
 sm = pystan.StanModel(model_code = model_code)
-#%%
+
 
 fit = sm.sampling(data = {
   'T' : len(data1),
@@ -178,10 +184,33 @@ fit = sm.sampling(data = {
 
 print fit
 #%%
-plt.plot(data1[:, 0], data1[:, 1])
-plt.plot(data1[:, 0], fit.extract()['yhat1'][2500, :], 'g')
-plt.plot(data1[:, 0], fit.extract()['yhat2'][2500, :], 'r')
+f = fit.extract()
+
+idxs = numpy.random.choice(range(2000), 20)
+for i in idxs:
+    plt.plot(data1[:, 0] * 100000.0, f['yhat1'][2000 + i, :], 'g')
+    plt.plot(data1[:, 0] * 100000.0, f['yhat2'][2000 + i, :], 'r')
+
+plt.plot(data1[:, 0] * 100000.0, data1[:, 1], '*')
+plt.xlabel('Time')
+plt.ylabel('e')
+
+ax2 = plt.gca().twinx()
+
+lp = f['lp'][2000:]
+for i in range(2000):
+    lp[i] -= max(lp[i])
+    lp[i] = numpy.exp(lp[i])
+    lp[i] /= numpy.sum(lp[i])
+
+ax2.plot(data1[:, 0] * 100000.0, numpy.mean(lp, axis = 0), 'c--o')
+#ax2.hist(f['s'][2000:])
+plt.title('Teal is the probability of switching from model 1 to model 2')
+plt.ylabel('Probability (for teal line)')
+
 plt.show()
+
+print
 
 #%%
 
@@ -230,9 +259,9 @@ plt.show()
 
 r = fit.extract()
 
-#labels = [['samples', 'plotted'][i in idxs] for i in range(2000)]
+labels = [['samples', 'plotted'][i in idxs] for i in range(2000)]
 
-df = pandas.DataFrame({ 'a0' : r['a'][2000:, 0], 'a1' : r['a'][2000:, 1], 'a2' : r['a'][2000:, 2], 'labels' : labels })
+df = pandas.DataFrame({ 'a0' : r['C'][2000:], 'a1' : r['b'][2000:], 'a2' : r['a'][2000:], 'labels' : labels })
 
 ags = None
 kags = None
