@@ -10,13 +10,13 @@ import pandas
 
 os.chdir('/home/bbales2/old_paper_modeling')
 
-data1 = scipy.io.loadmat('jackie/CreepInfo_75MPa_corr.mat')['CreepInfo_075corr'][::20]
-data2 = scipy.io.loadmat('jackie/CreepInfo_90MPa_corr_NoBlip.mat')['CreepInfo_090corr_NoBlip'][::20]
-data3 = scipy.io.loadmat('jackie/CreepInfo_105MPa_corr.mat')['CreepInfo_105corr'][::20]
+data1 = scipy.io.loadmat('jackie/CreepInfo_75MPa_corr.mat')['CreepInfo_075corr'][::10]
+data2 = scipy.io.loadmat('jackie/CreepInfo_90MPa_corr_NoBlip.mat')['CreepInfo_090corr_NoBlip'][::10]
+data3 = scipy.io.loadmat('jackie/CreepInfo_105MPa_corr.mat')['CreepInfo_105corr'][::10]
 
-data1[:, 0] /= 100000.0
-data2[:, 0] /= 100000.0
-data3[:, 0] /= 100000.0
+#data1[:, 0] /= 100000.0
+#data2[:, 0] /= 100000.0
+#data3[:, 0] /= 100000.0
 
 data = numpy.concatenate((data1, data2, data3), axis = 0)
 
@@ -35,21 +35,19 @@ Mpa = [7.05, 90.0, 105.0]
 model_code = """
 data {
   int<lower=1> N; // Number of single samples
-  int<lower=1> L;
-  int<lower=1> Ss[L];
-  int<lower=1> Ns[L];
   vector<lower=0.0>[N] t;
   vector<lower=0.0>[N] y;
-  vector<lower=0.0>[L] Mpa;
 }
 
 parameters {
-  real<lower=0.0> sigma;
-  vector<lower=0.0>[L] a;
-  vector<lower=0.0>[L] b;
+  real<lower=0.0> sigma1;
+  real<lower=0.0> a;
+  real<lower=0.0> b;
 
-  real<lower=0.0> a2;
-  real<lower=0.0> b2;
+  real<lower=0.0> C;
+  real<lower=0.0> p;
+  real<lower=0.0> e0;
+  real<lower=0.0> em;
   real<lower=0.0> sigma2;
 }
 
@@ -59,27 +57,39 @@ model {
   a ~ normal(0, 1.0);
   b ~ normal(0, 1.0);
 
-  sigma ~ cauchy(0.0, 1.0);
+  C ~ normal(0, 1.0);
+  p ~ normal(100000.0, 100000.0);
+  e0 ~ normal(0, 1.0);
+  em ~ normal(0, 1.0);
+
+  sigma1 ~ cauchy(0.0, 1.0);
   sigma2 ~ cauchy(0.0, 1.0);
 
-  for (l in 1:L)
-  {
-      y[Ss[l] + Ns[l] / 2 : Ss[l] + Ns[l]] ~ normal(a[l] * t[Ss[l] + Ns[l] / 2 : Ss[l] + Ns[l]] + b[l], sigma);
-  }
-
-  Mpa ~ normal(a2 * a + b2, sigma2);
+  y[N / 2:] ~ normal(a * t[N / 2:] + b, sigma1);
+  y ~ normal(C * (t / p) ./ (1 + t / p) + em * t + e0, sigma2);
 }
 
 generated quantities {
-  vector[N] yhat;
-  vector[L] Mpahat;
+  vector[N] yhat1;
+  vector[N] yhat2;
+  vector[N] yhat3;
 
-  for (l in 1:L)
+  real ti;
+  real yi;
+
+  yhat1 <- a * t + b;
+  yhat2 <- C * (t / p) ./ (1 + t / p) + em * t + e0;
   {
-    yhat[Ss[l]:Ss[l] + Ns[l]] <- a[l] * t[Ss[l]:Ss[l] + Ns[l]] + b[l];
-  }
+    real aTmp;
+    real bTmp;
 
-  Mpahat <- a2 * a + b2;
+    aTmp <- (C / (p * pow(1 + t[1] / p, 2.0)) + em);
+    bTmp <- yhat2[1] - aTmp * t[1];
+    yhat3 <- aTmp * t + bTmp;
+
+    ti <- -(bTmp - b) / (aTmp - a);
+    yi <- a * ti * b;
+  }
 }
 """
 
@@ -88,14 +98,61 @@ sm = pystan.StanModel(model_code = model_code)
 #%%
 
 fit = sm.sampling(data = {
-  'N' : len(data),
-  'L' : len(Mpa),
-  'Ss' : Ss,
-  'Ns' : Ns,
-  'Mpa' : Mpa,
-  't' : data[:, 0],
-  'y' : data[:, 1]
+  'N' : len(data1),
+  't' : data1[:, 0],
+  'y' : data1[:, 1]
   })
+#%%
+
+r = fit.extract()
+
+idxs = numpy.random.choice(range(2000), 20)
+plt.plot(data1[:, 0], data1[:, 1], '*')
+for i in idxs:
+    plt.plot(data1[:, 0], r['yhat1'][2000 + i, :], 'g')
+    plt.plot(data1[:, 0], r['yhat3'][2000 + i, :], 'b')
+    plt.plot(data1[:, 0], r['yhat2'][2000 + i, :], 'r')
+
+plt.ylim((0.0, 0.020))
+plt.xlabel('Time')
+plt.ylabel('e')
+plt.title('Green linear fit, Red polynomial fit, Blue initial slope of polynomial')
+plt.show()
+
+plt.hist(r['ti'], bins = 'auto')
+plt.title('Histogram of line intersections (2000 samples)')
+plt.xlabel('Time of intersection')
+plt.ylabel('Count')
+plt.show()
+
+plt.plot(r['a'][2000:], (r['C'][2000:] / (r['p'][2000:] * numpy.power(1 + data1[-1, 0] / r['p'][2000:], 2.0)) + r['em'][2000:]), '*')
+plt.title('Comparison of linear slope from line and polynomial fit')
+plt.xlabel('Slope from linear fit')
+plt.ylabel('Slope from polynomial')
+plt.show()
+
+labels = [['samples', 'plotted'][i in idxs] for i in range(2000)]
+
+df = pandas.DataFrame({ 'C' : r['C'][2000:], 'p' : r['p'][2000:], 'em' : r['em'][2000:], 'e0' : r['e0'][2000:], 'labels' : labels })
+
+ags = None
+kags = None
+
+def plot_scatter(*args, **kwargs):
+    global ags
+    global kags
+
+    ags = args
+    kags = kwargs
+
+    plt.plot(*(list(ags) + ['*']), **kwargs)
+
+g = seaborn.PairGrid(data = df, hue = 'labels', palette = reversed(seaborn.color_palette("Set1", 8)[0:2]))#
+g = g.map_diag(plt.hist)
+g = g.map_offdiag(plot_scatter)
+plt.gcf().set_size_inches((12, 9))
+plt.show()
+
 
 #%%
 r = fit.extract()
@@ -115,7 +172,7 @@ transformed data {
 parameters {
   real<lower=0> C;
   real<lower=0> p;
-  real<lower=0> em;
+  real<lower=0> e0;
 
   real<lower=0> a;
   real<lower=0> b;
@@ -126,9 +183,9 @@ parameters {
 transformed parameters {
   vector[T] lp;
 
-  //lp <- rep_vector(log_unif, T);
-  for (t in 1:T)
-    lp[t] <- normal_log(t, 51.0, 10.0);
+  lp <- rep_vector(log_unif, T);
+  //for (t in 1:T)
+  //  lp[t] <- normal_log(t, 51.0, 10.0);
 
   for (s in 1:T)
   {
@@ -139,7 +196,7 @@ transformed parameters {
     {
       if(t < s)
       {
-        lp[s] <- lp[s] + normal_log(y[t], C * (x[t] / p) / (1 + x[t] / p), sigma);//C * x[t] + p
+        lp[s] <- lp[s] + normal_log(y[t], C * (x[t] / p) / (1 + x[t] / p) + e0, sigma);//C * x[t] + p
       }
       else
       {
@@ -152,7 +209,7 @@ transformed parameters {
 model {
   C ~ uniform(0.0, 1.0);
   p ~ uniform(0.0, 10.0);
-  em ~ uniform(0.0, 1.0);
+  e0 ~ uniform(0.0, 1.0);
 
   a ~ uniform(0.0, 1.0);
   b ~ uniform(0.0, 1.0);
@@ -165,10 +222,12 @@ model {
 generated quantities {
   vector[T] yhat1;
   vector[T] yhat2;
+  vector[T] yhat3;
   int<lower=1,upper=T> s;
 
-  yhat1 <- C * (x / p) ./ (1 + x / p);
+  yhat1 <- C * (x / p) ./ (1 + x / p) + e0;
   yhat2 <- a * x + b;
+  yhat3 <- C * x / p + e0;
   s <- categorical_rng(softmax(lp));
 }
 """
@@ -189,8 +248,10 @@ f = fit.extract()
 idxs = numpy.random.choice(range(2000), 20)
 for i in idxs:
     plt.plot(data1[:, 0] * 100000.0, f['yhat1'][2000 + i, :], 'g')
+    plt.plot(data1[:, 0] * 100000.0, f['yhat3'][2000 + i, :], 'b')
     plt.plot(data1[:, 0] * 100000.0, f['yhat2'][2000 + i, :], 'r')
 
+plt.ylim((0.0, 0.020))
 plt.plot(data1[:, 0] * 100000.0, data1[:, 1], '*')
 plt.xlabel('Time')
 plt.ylabel('e')
