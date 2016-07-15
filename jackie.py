@@ -10,9 +10,9 @@ import pandas
 
 os.chdir('/home/bbales2/old_paper_modeling')
 
-data1 = scipy.io.loadmat('jackie/CreepInfo_75MPa_corr.mat')['CreepInfo_075corr'][::20]
-data2 = scipy.io.loadmat('jackie/CreepInfo_90MPa_corr_NoBlip.mat')['CreepInfo_090corr_NoBlip'][::20]
-data3 = scipy.io.loadmat('jackie/CreepInfo_105MPa_corr.mat')['CreepInfo_105corr'][::20]
+data1 = scipy.io.loadmat('jackie/CreepInfo_75MPa_corr.mat')['CreepInfo_075corr']#[::20]
+data2 = scipy.io.loadmat('jackie/CreepInfo_90MPa_corr_NoBlip.mat')['CreepInfo_090corr_NoBlip']#[::20]
+data3 = scipy.io.loadmat('jackie/CreepInfo_105MPa_corr.mat')['CreepInfo_105corr']#[::20]
 
 #data1[:, 0] /= 100000.0
 #data2[:, 0] /= 100000.0
@@ -28,7 +28,7 @@ plt.show()
 
 Ns = [len(data1), len(data2), len(data3)]
 Ss = [1, len(data1), len(data1) + len(data2)]
-Mpa = [7.05, 90.0, 105.0]
+Mpa = [70.5, 90.0, 105.0]
 
 #%%
 
@@ -45,10 +45,7 @@ data {
 }
 
 parameters {
-  //simplex[2] theta1;
-  //simplex[2] theta2;
   real<lower=0.0> sigma1[L];
-  //real mu[K];
   vector<lower=0.0>[L] a;
   real<lower=0.0> b[L];
 
@@ -56,12 +53,7 @@ parameters {
   real<lower=0.0> p[L];
   real<lower=0.0> e0[L];
   real<lower=0.0> em[L];
-  //real mu2[K];
   real<lower=0.0> sigma2[L];
-
-  real n;
-  real b3;
-  real<lower = 0.0> sigma3;
 }
 
 model {
@@ -76,12 +68,8 @@ model {
   e0 ~ normal(0, 1.0);
   em ~ normal(0, 1.0);
 
-  n ~ normal(0, 1.0);
-  b3 ~ normal(0, 1.0);
-
   sigma1 ~ cauchy(0.0, 1.0);
   sigma2 ~ cauchy(0.0, 1.0);
-  sigma3 ~ cauchy(0.0, 1.0);
 
   for (l in 1:L)
   {
@@ -99,50 +87,13 @@ model {
 
     trange <- t[s : se] - t[s];
     y[s : se] ~ cauchy(C[l] * (trange / p[l]) ./ (1 + trange / p[l]) + em[l] * trange + e0[l], sigma2[l]);
-
-    {
-      real aTmp;
-      real bTmp;
-
-      aTmp <- C[l] / p[l] + em[l];
-      bTmp <- y[s];
-
-      Mpa[l] ~ lognormal(log(a[l]) * n + b3, sigma3);
-    }
   }
-
-  // temp for log component densities
-  //mu ~ normal(0, 1.0);
-  //mu2[1] ~ normal(0, 0.01);
-  //mu2[2] ~ normal(0, 0.1);
-
-  //for (n in N / 2:N) {
-    //for (k in 1:K) {
-      //ps[k] <- log(theta1[k]) + normal_log(y[n], a * t[n] + b + mu[k], sigma1[k]);
-
-      //ps[k] <- log(theta[k]) + normal_log(y[n],mu[k],sigma[k]);
-    //}
-
-    //increment_log_prob(log_sum_exp(ps));
-  //}
-
-  //for (n in N / 2:N) {
-  //  for (k in 1:K) {
-  //    ps[k] <- log(theta2[k]) + normal_log(y[n], C * (t[n] / p) / (1 + t[n] / p) + em * t[n] + e0 + mu2[k], sigma2[k]);
-      //ps[k] <- log(theta1[k]) + normal_log(y[n], a * t[n] + b + mu[k], sigma1[k]);
-
-      //ps[k] <- log(theta[k])+ normal_log(y[n],mu[k],sigma[k]);
-  //  }
-
-  //  increment_log_prob(log_sum_exp(ps));
-  //}
 }
 
 generated quantities {
   vector[N] yhat1;
   vector[N] yhat2;
   vector[N] yhat3;
-  vector[L] Mpahat;
 
   real ti[L];
   real yi[L];
@@ -172,8 +123,6 @@ generated quantities {
       ti[l] <- -(bTmp - aTmp * t[s] - b[l]) / (aTmp - a[l]);
       yi[l] <- a[l] * ti[l] + b[l];
     }
-
-    Mpahat <- exp(log(a) * n + b3);
   }
 }
 """
@@ -219,7 +168,6 @@ plt.show()
 for i in idxs:
     plt.loglog(r['a'][2000 + i, :], r['Mpahat'][2000 + i, :], 'r')#%%Mpa
 plt.show()
-#%%
 
 for l in range(3):
     plt.hist(r['ti'][2000:, l], bins = 'auto')
@@ -259,6 +207,79 @@ g = seaborn.PairGrid(data = df, hue = 'labels', palette = reversed(seaborn.color
 g = g.map_diag(plt.hist)
 g = g.map_offdiag(plot_scatter)
 plt.gcf().set_size_inches((12, 9))
+plt.show()
+#%%
+model_code = """
+data {
+  int<lower=1> N; // Number of samples
+  int<lower=1> L;
+  vector<lower=0.0>[N] y[L];
+  vector[L] Mpa;
+}
+
+parameters {
+  real<lower=0.0> sigma;
+  real a;
+  real b;
+}
+
+model {
+  for (l in 1:L)
+  {
+    y[l] ~ lognormal(a * log(Mpa[l]) + b, sigma);
+  }
+}
+
+generated quantities {
+  vector[L] yhat;
+
+  for (l in 1:L)
+    yhat[l] <- lognormal_rng(a * log(Mpa[l]) + b, sigma);
+}
+"""
+
+sm2 = pystan.StanModel(model_code = model_code)
+#%%
+slopes = r['a'][:3000]
+
+fit2 = sm2.sampling(data = {
+  'y' : slopes.transpose(),
+  'N' : slopes.shape[0],
+  'L' : slopes.shape[1],
+  'Mpa' : Mpa
+})
+#%%
+r2 = fit2.extract()
+
+idxs = numpy.random.choice(range(2000), 20)
+for i in idxs:
+    plt.plot(numpy.log(Mpa), numpy.log(r2['yhat'][2000 + i, :]), '-*')
+plt.title('')
+plt.xlabel('log(Mpa)')
+plt.ylabel('log(minimum_slope)')
+plt.show()
+
+bp = plt.boxplot(numpy.log(slopes))
+plt.setp(bp['boxes'], color='green')
+plt.setp(bp['whiskers'], color='green')
+plt.setp(bp['fliers'], marker='None')
+bp = plt.boxplot(numpy.log(r2['yhat'][3500:, :]))
+plt.setp(bp['boxes'], color='black')
+plt.setp(bp['whiskers'], color='black')
+plt.setp(bp['fliers'], marker='None')
+plt.ylabel('Log(min slopes)')
+plt.xlabel('These 1, 2, 3 are not spaced properly, but they represent the different MPas')
+plt.show()
+
+seaborn.distplot(r2['a'][2000:])
+plt.xlabel('"a" in log(min_slope) ~ a * log(Mpa) + b')
+plt.show()
+
+seaborn.distplot(r2['b'][2000:])
+plt.xlabel('"b" in log(min_slope) ~ a * log(Mpa) + b')
+plt.show()
+
+seaborn.distplot(r2['sigma'][2000:])
 plt.show()
 #%%
 a = r['yhat1'][2000 + i, :] - data1[:, 1]
