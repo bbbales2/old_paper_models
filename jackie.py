@@ -10,9 +10,9 @@ import pandas
 
 os.chdir('/home/bbales2/old_paper_modeling')
 
-data1 = scipy.io.loadmat('jackie/CreepInfo_75MPa_corr.mat')['CreepInfo_075corr'][::10]
-data2 = scipy.io.loadmat('jackie/CreepInfo_90MPa_corr_NoBlip.mat')['CreepInfo_090corr_NoBlip'][::10]
-data3 = scipy.io.loadmat('jackie/CreepInfo_105MPa_corr.mat')['CreepInfo_105corr'][::10]
+data1 = scipy.io.loadmat('jackie/CreepInfo_75MPa_corr.mat')['CreepInfo_075corr'][::20]
+data2 = scipy.io.loadmat('jackie/CreepInfo_90MPa_corr_NoBlip.mat')['CreepInfo_090corr_NoBlip'][::20]
+data3 = scipy.io.loadmat('jackie/CreepInfo_105MPa_corr.mat')['CreepInfo_105corr'][::20]
 
 #data1[:, 0] /= 100000.0
 #data2[:, 0] /= 100000.0
@@ -35,24 +35,38 @@ Mpa = [7.05, 90.0, 105.0]
 model_code = """
 data {
   int<lower=1> N; // Number of single samples
+  int<lower=1> L;
+  int<lower=1> Ss[L];
+  int<lower=1> Ns[L];
+  //int<lower=1> K; // Number of mixture components
   vector<lower=0.0>[N] t;
   vector<lower=0.0>[N] y;
+  vector[L] Mpa;
 }
 
 parameters {
-  real<lower=0.0> sigma1;
-  real<lower=0.0> a;
-  real<lower=0.0> b;
+  //simplex[2] theta1;
+  //simplex[2] theta2;
+  real<lower=0.0> sigma1[L];
+  //real mu[K];
+  vector<lower=0.0>[L] a;
+  real<lower=0.0> b[L];
 
-  real<lower=0.0> C;
-  real<lower=0.0> p;
-  real<lower=0.0> e0;
-  real<lower=0.0> em;
-  real<lower=0.0> sigma2;
+  real<lower=0.0> C[L];
+  real<lower=0.0> p[L];
+  real<lower=0.0> e0[L];
+  real<lower=0.0> em[L];
+  //real mu2[K];
+  real<lower=0.0> sigma2[L];
+
+  real n;
+  real b3;
+  real<lower = 0.0> sigma3;
 }
 
 model {
   vector[N] yhat;
+  //real ps[K];
 
   a ~ normal(0, 1.0);
   b ~ normal(0, 1.0);
@@ -62,38 +76,121 @@ model {
   e0 ~ normal(0, 1.0);
   em ~ normal(0, 1.0);
 
+  n ~ normal(0, 1.0);
+  b3 ~ normal(0, 1.0);
+
   sigma1 ~ cauchy(0.0, 1.0);
   sigma2 ~ cauchy(0.0, 1.0);
+  sigma3 ~ cauchy(0.0, 1.0);
 
-  y[N / 2:] ~ normal(a * t[N / 2:] + b, sigma1);
-  y ~ normal(C * (t / p) ./ (1 + t / p) + em * t + e0, sigma2);
+  for (l in 1:L)
+  {
+    vector[Ns[l]] trange;
+
+    int s;
+    int m;
+    int se;
+
+    s <- Ss[l];
+    m <- Ss[l] + Ns[l] / 2;
+    se <- Ss[l] + Ns[l] - 1;
+
+    y[m : se] ~ cauchy(a[l] * t[m : se] + b[l], sigma1[l]);
+
+    trange <- t[s : se] - t[s];
+    y[s : se] ~ cauchy(C[l] * (trange / p[l]) ./ (1 + trange / p[l]) + em[l] * trange + e0[l], sigma2[l]);
+
+    {
+      real aTmp;
+      real bTmp;
+
+      aTmp <- C[l] / p[l] + em[l];
+      bTmp <- y[s];
+
+      Mpa[l] ~ lognormal(log(a[l]) * n + b3, sigma3);
+    }
+  }
+
+  // temp for log component densities
+  //mu ~ normal(0, 1.0);
+  //mu2[1] ~ normal(0, 0.01);
+  //mu2[2] ~ normal(0, 0.1);
+
+  //for (n in N / 2:N) {
+    //for (k in 1:K) {
+      //ps[k] <- log(theta1[k]) + normal_log(y[n], a * t[n] + b + mu[k], sigma1[k]);
+
+      //ps[k] <- log(theta[k]) + normal_log(y[n],mu[k],sigma[k]);
+    //}
+
+    //increment_log_prob(log_sum_exp(ps));
+  //}
+
+  //for (n in N / 2:N) {
+  //  for (k in 1:K) {
+  //    ps[k] <- log(theta2[k]) + normal_log(y[n], C * (t[n] / p) / (1 + t[n] / p) + em * t[n] + e0 + mu2[k], sigma2[k]);
+      //ps[k] <- log(theta1[k]) + normal_log(y[n], a * t[n] + b + mu[k], sigma1[k]);
+
+      //ps[k] <- log(theta[k])+ normal_log(y[n],mu[k],sigma[k]);
+  //  }
+
+  //  increment_log_prob(log_sum_exp(ps));
+  //}
 }
 
 generated quantities {
   vector[N] yhat1;
   vector[N] yhat2;
   vector[N] yhat3;
+  vector[L] Mpahat;
 
-  real ti;
-  real yi;
+  real ti[L];
+  real yi[L];
 
-  yhat1 <- a * t + b;
-  yhat2 <- C * (t / p) ./ (1 + t / p) + em * t + e0;
+  for (l in 1:L)
   {
-    real aTmp;
-    real bTmp;
+    int s;
+    int se;
+    vector[Ns[l]] trange;
 
-    aTmp <- (C / (p * pow(1 + t[1] / p, 2.0)) + em);
-    bTmp <- yhat2[1] - aTmp * t[1];
-    yhat3 <- aTmp * t + bTmp;
+    s <- Ss[l];
+    se <- Ss[l] + Ns[l] - 1;
 
-    ti <- -(bTmp - b) / (aTmp - a);
-    yi <- a * ti * b;
+    yhat1[s : se] <- a[l] * t[s : se] + b[l];
+
+    trange <- t[s : se] - t[s];
+    yhat2[s : se] <- C[l] * (trange / p[l]) ./ (1 + trange / p[l]) + em[l] * trange + e0[l];
+
+    {
+      real aTmp;
+      real bTmp;
+
+      aTmp <- C[l] / p[l] + em[l];
+      bTmp <- yhat2[s];
+      yhat3[s : se] <- aTmp * trange + bTmp;
+
+      ti[l] <- -(bTmp - aTmp * t[s] - b[l]) / (aTmp - a[l]);
+      yi[l] <- a[l] * ti[l] + b[l];
+    }
+
+    Mpahat <- exp(log(a) * n + b3);
   }
 }
 """
 
 sm = pystan.StanModel(model_code = model_code)
+
+#%%
+
+fit = sm.sampling(data = {
+  'L' : len(Ns),
+  'Ss' : Ss,
+  'Ns' : Ns,
+  'N' : len(data),
+  't' : data[:, 0],
+  'y' : data[:, 1],
+  'Mpa' : Mpa
+})
 
 #%%
 
@@ -107,28 +204,39 @@ fit = sm.sampling(data = {
 r = fit.extract()
 
 idxs = numpy.random.choice(range(2000), 20)
-plt.plot(data1[:, 0], data1[:, 1], '*')
+plt.plot(data[:, 0], data[:, 1], '*')
 for i in idxs:
-    plt.plot(data1[:, 0], r['yhat1'][2000 + i, :], 'g')
-    plt.plot(data1[:, 0], r['yhat3'][2000 + i, :], 'b')
-    plt.plot(data1[:, 0], r['yhat2'][2000 + i, :], 'r')
+    plt.plot(data[:, 0], r['yhat1'][2000 + i, :], 'g', alpha = 0.1)
+    plt.plot(data[:, 0], r['yhat2'][2000 + i, :], 'r', alpha = 0.1)
+    plt.plot(data[:, 0], r['yhat3'][2000 + i, :], 'b', alpha = 0.1)
 
-plt.ylim((0.0, 0.020))
+plt.ylim((0.0, 0.035))
 plt.xlabel('Time')
 plt.ylabel('e')
 plt.title('Green linear fit, Red polynomial fit, Blue initial slope of polynomial')
 plt.show()
 
-plt.hist(r['ti'], bins = 'auto')
-plt.title('Histogram of line intersections (2000 samples)')
-plt.xlabel('Time of intersection')
-plt.ylabel('Count')
+for i in idxs:
+    plt.loglog(r['a'][2000 + i, :], r['Mpahat'][2000 + i, :], 'r')#%%Mpa
 plt.show()
+#%%
 
-plt.plot(r['a'][2000:], (r['C'][2000:] / (r['p'][2000:] * numpy.power(1 + data1[-1, 0] / r['p'][2000:], 2.0)) + r['em'][2000:]), '*')
-plt.title('Comparison of linear slope from line and polynomial fit')
-plt.xlabel('Slope from linear fit')
-plt.ylabel('Slope from polynomial')
+for l in range(3):
+    plt.hist(r['ti'][2000:, l], bins = 'auto')
+    plt.title('Histogram of line intersections for section {0}'.format(l))
+    plt.xlabel('Time of intersection')
+    plt.ylabel('Count')
+    plt.show()
+
+for l in range(3):
+    plt.plot(r['a'][2000:, l], r['C'][2000:, l] / r['p'][2000:, l] + r['em'][2000:, l], '*')
+    plt.title('Comparison of maximum and minimum slopes for section {0}'.format(l))
+    plt.xlabel('Minimum slopes (from linear fit)')
+    plt.ylabel('Maximum slopes (from polynomial fit)')
+    plt.show()
+
+seaborn.distplot(r['n'][2000:])
+plt.xlabel('Values of n')
 plt.show()
 
 labels = [['samples', 'plotted'][i in idxs] for i in range(2000)]
@@ -152,7 +260,13 @@ g = g.map_diag(plt.hist)
 g = g.map_offdiag(plot_scatter)
 plt.gcf().set_size_inches((12, 9))
 plt.show()
+#%%
+a = r['yhat1'][2000 + i, :] - data1[:, 1]
 
+for dist_name in ['norm', 'cauchy']:#[ 'alpha', 'anglit', 'arcsine', 'beta', 'betaprime', 'bradford', 'burr', 'cauchy', 'chi', 'chi2', 'cosine', 'dgamma', 'dweibull', 'erlang', 'expon', 'exponweib', 'exponpow', 'f', 'fatiguelife', 'fisk', 'foldcauchy', 'foldnorm', 'frechet_r', 'frechet_l', 'genlogistic', 'genpareto', 'genexpon', 'genextreme', 'gausshyper', 'gamma', 'gengamma', 'genhalflogistic', 'gilbrat', 'gompertz', 'gumbel_r', 'gumbel_l', 'halfcauchy', 'halflogistic', 'halfnorm', 'hypsecant', 'invgamma', 'invgauss', 'invweibull', 'johnsonsb', 'johnsonsu', 'ksone', 'kstwobign', 'laplace', 'logistic', 'loggamma', 'loglaplace', 'lognorm', 'lomax', 'maxwell', 'mielke', 'nakagami', 'ncx2', 'ncf', 'nct', 'norm', 'pareto', 'pearson3', 'powerlaw', 'powerlognorm', 'powernorm', 'rdist', 'reciprocal', 'rayleigh', 'rice', 'recipinvgauss', 'semicircular', 't', 'triang', 'truncexpon', 'truncnorm', 'tukeylambda', 'uniform', 'vonmises', 'wald', 'weibull_min', 'weibull_max', 'wrapcauchy']:
+    seaborn.distplot(a, fit = getattr(scipy.stats, dist_name), kde = False)
+    plt.title(dist_name)
+    plt.show()
 
 #%%
 r = fit.extract()
