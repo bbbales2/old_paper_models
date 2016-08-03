@@ -18,7 +18,7 @@ data3 = scipy.io.loadmat('jackie/CreepInfo_105MPa_corr.mat')['CreepInfo_105corr'
 #data2[:, 0] /= 100000.0
 #data3[:, 0] /= 100000.0
 
-data = numpy.concatenate((data1, data2, data3), axis = 0)
+data = data2[len(data2) / 2:]#numpy.concatenate((data1, data2, data3), axis = 0)
 
 plt.plot(data[:, 0], data[:, 1])
 plt.show()
@@ -28,157 +28,221 @@ plt.show()
 
 Ns = [len(data1), len(data2), len(data3)]
 Ss = [1, len(data1), len(data1) + len(data2)]
-Mpa = numpy.array([70.5, 90.0, 105.0])
+Mpa = [70.5, 90.0, 105.0]
+
+#%%
+
+model_code = """
+data {
+  int<lower=1> N;
+  vector<lower=0.0>[N] dt;
+  vector[N] dy;
+}
+
+parameters {
+  real<lower=0.0> sigma1;
+  real a;
+}
+
+model {
+  a ~ normal(0, 1.0);
+  
+  sigma1 ~ cauchy(0.0, 1.0);
+
+  dy ./ dt ~ normal(a, sigma1);
+}
+
+generated quantities {
+  real slope;
+  
+  slope <- normal_rng(a, sigma1);
+}
+"""
+
+sm = pystan.StanModel(model_code = model_code)
+#%%
+
+fit = sm.sampling(data = {
+  'N' : len(data) - 1,
+  'dt' : data[1:, 0] - data[:-1, 0],
+  'dy' : data[1:, 1] - data[:-1, 1]
+})
+
+plt.hist(fit.extract()['slope'][2000:])
 
 #%%
 
 model_code = """
 data {
   int<lower=1> N; // Number of single samples
-  int<lower=1> L;
-  int<lower=1> Ss[L];
-  int<lower=1> Ns[L];
   //int<lower=1> K; // Number of mixture components
   vector<lower=0.0>[N] t;
   vector<lower=0.0>[N] y;
 }
 
 parameters {
-  real<lower=0.0> sigma1[L];
-  vector<lower=0.0>[L] a;
-  real<lower=0.0> b[L];
-
-  real<lower=0.0> C[L];
-  real<lower=0.0> p[L];
-  real<lower=0.0> e0[L];
-  real<lower=0.0> em[L];
-  real<lower=0.0> sigma2[L];
+  real<lower=0.0> sigma1;
+  real<lower=0.0> a;
+  real<lower=0.0> b;
 }
 
 model {
-  vector[N] yhat;
-  //real ps[K];
-
   a ~ normal(0, 1.0);
   b ~ normal(0, 1.0);
-
-  C ~ normal(0, 1.0);
-  p ~ normal(100000.0, 100000.0);
-  e0 ~ normal(0, 1.0);
-  em ~ normal(0, 1.0);
-
+  
   sigma1 ~ cauchy(0.0, 1.0);
-  sigma2 ~ cauchy(0.0, 1.0);
 
-  for (l in 1:L)
-  {
-    vector[Ns[l]] trange;
-
-    int s;
-    int m;
-    int se;
-
-    s <- Ss[l];
-    m <- Ss[l] + 3 * Ns[l] / 4;
-    se <- Ss[l] + Ns[l] - 1;
-
-    y[m : se] ~ normal(a[l] * t[m : se] + b[l], sigma1[l]);
-
-    trange <- t[s : se] - t[s];
-    y[s : se] ~ normal(C[l] * (trange / p[l]) ./ (1 + trange / p[l]) + em[l] * trange + e0[l], sigma2[l]);
-  }
+  y ~ normal(a * t + b, sigma1);
 }
 
-generated quantities {
-  vector[N] yhat1;
-  vector[N] yhat2;
-  vector[N] yhat3;
-  vector[N] yhat1m;
-  vector[N] yhat2m;
-  vector[N] yhat3m;
-
-  real ti[L];
-  real yi[L];
-
-  for (l in 1:L)
-  {
-    int s;
-    int se;
-    vector[Ns[l]] trange;
-
-    s <- Ss[l];
-    se <- Ss[l] + Ns[l] - 1;
-
-    for (j in s:se)
-      yhat1[j] <- normal_rng(a[l] * t[j] + b[l], sigma1[l]);
-        
-    yhat1m[s : se] <- a[l] * t[s : se] + b[l];
-
-    trange <- t[s : se] - t[s];
-    for (j in s:se)
-      yhat2[j] <- normal_rng(C[l] * (trange[j - s + 1] / p[l]) ./ (1 + trange[j - s + 1] / p[l]) + em[l] * trange[j - s + 1] + e0[l], sigma2[l]);
-
-    yhat2m[s : se] <- C[l] * (trange / p[l]) ./ (1 + trange / p[l]) + em[l] * trange + e0[l];
-
-    {
-      real aTmp;
-      real bTmp;
-
-      aTmp <- C[l] / p[l] + em[l];
-      bTmp <- yhat2[s];
-      for (j in s:se)
-        yhat3[j] <- normal_rng(aTmp * trange[j - s + 1] + bTmp, sigma2[l]);
-
-      yhat3m[s : se] <- aTmp * trange + bTmp;
-
-      ti[l] <- -(bTmp - aTmp * t[s] - b[l]) / (aTmp - a[l]);
-      yi[l] <- a[l] * ti[l] + b[l];
-    }
-  }
-}
+//generated quantities {
+//  vector[N] us;
+//  
+//  for (n in 1:N)
+//    us[n] <- a * t[n] + b;    
+//}
 """
 
 sm = pystan.StanModel(model_code = model_code)
-
+#sigma1 2.0e-4  6.7e-7 1.8e-5 1.7e-4 1.9e-4 2.0e-4 2.1e-4 2.4e-4  743.0    nan
+#a      2.0e-8 2.5e-116.3e-10 1.9e-8 2.0e-8 2.0e-8 2.1e-8 2.1e-8  617.0    nan
+#b        0.01  1.2e-5 3.0e-4   0.01   0.01   0.01   0.01   0.01  614.0    nan
 #%%
 
 fit = sm.sampling(data = {
-  'L' : len(Ns),
-  'Ss' : Ss,
-  'Ns' : Ns,
   'N' : len(data),
   't' : data[:, 0],
   'y' : data[:, 1]
 })
+#%%
+
+model_code = """
+data {
+  int<lower=1> N; // Number of single samples
+  int<lower=1> T; // Number of timepoints
+  //int<lower=1> K; // Number of mixture components
+  vector<lower=0.0>[T] ts;
+  vector[T] lslopes[N];
+}
+
+parameters {
+  real a;
+  real b;
+  
+  real u[T];
+  real<lower=0.0> sigma[T];
+}
+
+model {
+  for (t in 1:T)
+    lslopes[:, t] ~ normal(u[t], sigma[t]);
+
+  a * ts + b ~ normal(u, sigma);
+}
+
+//generated quantities {
+//  vector[N] yhat1;
+//  
+//  for (n in 1:N)
+//    yhat1[n] <- normal_rng(a * t[n] + b, sigma1);
+//}
+"""
+
+sm2 = pystan.StanModel(model_code = model_code)
 
 #%%
 
-fit = sm.sampling(data = {
-  'N' : len(data1),
-  't' : data1[:, 0],
-  'y' : data1[:, 1]
+model_code = """
+data {
+  int<lower=1> N; // Number of single samples
+  int<lower=1> T; // Number of timepoints
+  vector<lower=0.0>[T] ts;
+  vector[N] y[T];
+}
+
+parameters {
+  real a;
+  real b;
+  
+  real<lower=0.0> sigma;
+}
+
+model {
+  for (t in 1:T)
+    y[t] ~ normal(a * ts[t] + b, sigma);
+}
+
+//generated quantities {
+//  vector[N] yhat1;
+//  
+//  for (n in 1:N)
+//    yhat1[n] <- normal_rng(a * t[n] + b, sigma1);
+//}
+"""
+
+sm3 = pystan.StanModel(model_code = model_code)
+
+#%%
+
+idxs = [0, 37, 73]
+
+lslopes = numpy.log(slopes)
+
+us = lslopes.mean(axis = 0)
+stds = lslopes.std(axis = 0)
+
+#%%
+fit2 = sm2.sampling(data = {
+  'N' : lslopes.shape[0],
+  'T' : len(us),
+  'ts' : numpy.log(Mpa),
+  'lslopes' : lslopes
   })
 #%%
 
-r = fit.extract()
+fit3 = sm3.sampling(data = {
+  'N' : slopes.shape[0],
+  'T' : slopes.shape[1],
+  'ts' : numpy.log(Mpa),
+  'y' : numpy.log(slopes).transpose()
+  })
+#%%
+
+r = fit3.extract()
+r2 = fit2.extract()
+
+seaborn.distplot(r['a'][2000:])
+plt.show()
+
+seaborn.distplot(r2['a'][2000:], bins = 'auto')
+plt.show()
+#%%
+
+idxs = numpy.random.choice(range(2000), 20)
+errs = []
+for i in idxs:
+    #errs.extend((data[:, 1] - r['yhat1'][2000 + i, :])[len(data) / 2:])
+    errs.extend((data[:, 1] - r['yhat2'][2000 + i, :]))
+seaborn.distplot(errs, fit = scipy.stats.norm, kde = False)
+plt.show()
+#%%
 
 idxs = numpy.random.choice(range(2000), 20)
 plt.plot(data[:, 0], data[:, 1], '*')
 for i in idxs:
-    plt.plot(data[:, 0], r['yhat1m'][2000 + i, :], 'g', alpha = 0.1)
-    plt.plot(data[:, 0], r['yhat2m'][2000 + i, :], 'r', alpha = 0.1)
-    plt.plot(data[:, 0], r['yhat3m'][2000 + i, :], 'b', alpha = 0.1)
+    plt.plot(data[:, 0], r['yhat1'][2000 + i, :], 'g', alpha = 0.1)
+    plt.plot(data[:, 0], r['yhat2'][2000 + i, :], 'r', alpha = 0.1)
+    plt.plot(data[:, 0], r['yhat3'][2000 + i, :], 'b', alpha = 0.1)
 
 plt.ylim((0.0, 0.035))
 plt.xlabel('Time')
 plt.ylabel('e')
 plt.title('Green linear fit, Red polynomial fit, Blue initial slope of polynomial')
-plt.gcf().set_size_inches((16, 20))
 plt.show()
-#%%
-#for i in idxs:
-#    plt.loglog(r['a'][2000 + i, :], r['Mpahat'][2000 + i, :], 'r')#%%Mpa
-#plt.show()
+
+for i in idxs:
+    plt.loglog(r['a'][2000 + i, :], r['Mpahat'][2000 + i, :], 'r')#%%Mpa
+plt.show()
 
 for l in range(3):
     plt.hist(r['ti'][2000:, l], bins = 'auto')
@@ -193,7 +257,7 @@ for l in range(3):
     plt.xlabel('Minimum slopes (from linear fit)')
     plt.ylabel('Maximum slopes (from polynomial fit)')
     plt.show()
-#%%
+
 seaborn.distplot(r['n'][2000:])
 plt.xlabel('Values of n')
 plt.show()
@@ -220,19 +284,11 @@ g = g.map_offdiag(plot_scatter)
 plt.gcf().set_size_inches((12, 9))
 plt.show()
 #%%
-for l in range(3):
-    t = data[:, 0][Ss[l] + Ns[l] - 1] - data[:, 0][Ss[l]]
-    plt.plot(r['a'][2000:, l], (r['C'][2000:, l] / r['p'][2000:, l]) / ((1 + t / r['p'][2000:, l])**2) + r['em'][2000:, l], '*')
-    plt.title('Comparison of maximum and minimum slopes for section {0}'.format(l))
-    plt.xlabel('Minimum slopes (from linear fit)')
-    plt.ylabel('Minimum slopes (from polynomial fit)')
-    plt.show()
-#%%
 model_code = """
 data {
   int<lower=1> N; // Number of samples
   int<lower=1> L;
-  vector[N] y[L];
+  vector<lower=0.0>[N] y[L];
   vector[L] Mpa;
 }
 
@@ -245,7 +301,7 @@ parameters {
 model {
   for (l in 1:L)
   {
-    y[l] ~ lognormal(a * Mpa[l] + b, sigma);
+    y[l] ~ lognormal(a * log(Mpa[l]) + b, sigma);
   }
 }
 
@@ -253,82 +309,31 @@ generated quantities {
   vector[L] yhat;
 
   for (l in 1:L)
-    yhat[l] <- lognormal_rng(a * Mpa[l] + b, sigma);
-}
-"""
-
-model_code1 = """
-data {
-  int<lower=1> N; // Number of single samples
-  int<lower=1> L; // Number of timepoints
-  vector[L] Mpa;
-  vector[N] y[L];
-}
-
-parameters {
-  real a;
-  real b;
-  
-  real u[L];
-  real<lower=0.0> sigma[L];
-  
-  real au;
-  real<lower=0.0> asigma;
-}
-
-model {
-  for (l in 1:L)
-    y[l] ~ lognormal(u[l], sigma[l]);
-
-  a * Mpa + b ~ normal(u, sigma);
-  
-  //for (l in 1:L)
-  //{
-  //  for(n in 1:N)
-  //  {
-  //    (log(y[l, n]) - b) / log(Mpa[l]) ~ normal(a, sigma);
-  //  }
-  //}
+    yhat[l] <- lognormal_rng(a * log(Mpa[l]) + b, sigma);
 }
 """
 
 sm2 = pystan.StanModel(model_code = model_code)
 #%%
-slopes = numpy.zeros((1000, 3))
+slopes = r['a'][:3000]
 
-for l in range(3):
-    t = data[:, 0][Ss[l] + Ns[l] - 1] - data[:, 0][Ss[l]]
-    slopes[:, l] = (r['C'][3000:, l] / r['p'][3000:, l]) / ((1 + t / r['p'][3000:, l])**2) + r['em'][3000:, l]
-    
-print numpy.log(slopes).mean(axis = 0)
-print numpy.log(slopes).std(axis = 0)
-#%%
-slopes = r['a'][3000:]
-    
-print numpy.log(slopes).mean(axis = 0)
-print numpy.log(slopes).std(axis = 0)
-
-lMpa = numpy.log(Mpa)
-lMpa -= lMpa[0]
-#%%
 fit2 = sm2.sampling(data = {
   'y' : slopes.transpose(),
   'N' : slopes.shape[0],
   'L' : slopes.shape[1],
-  'Mpa' : lMpa
+  'Mpa' : Mpa
 })
-
+#%%
 r2 = fit2.extract()
 
-seaborn.distplot(r2['a'][2000:])
-plt.xlabel('"a" in log(min_slope) ~ a * log(Mpa) + b')
-plt.title('Slopes from the polynomial fit')
+idxs = numpy.random.choice(range(2000), 20)
+for i in idxs:
+    plt.plot(numpy.log(Mpa), numpy.log(r2['yhat'][2000 + i, :]), '-*')
+plt.title('')
+plt.xlabel('log(Mpa)')
+plt.ylabel('log(minimum_slope)')
 plt.show()
 
-seaborn.distplot(r2['b'][2000:])
-plt.xlabel('"b" in log(min_slope) ~ a * log(Mpa) + b')
-plt.show()
-#%%
 bp = plt.boxplot(numpy.log(slopes))
 plt.setp(bp['boxes'], color='green')
 plt.setp(bp['whiskers'], color='green')
@@ -341,53 +346,23 @@ plt.ylabel('Log(min slopes)')
 plt.xlabel('These 1, 2, 3 are not spaced properly, but they represent the different MPas')
 plt.show()
 
-idxs = numpy.random.choice(range(2000), 20)
-for i in idxs:
-    plt.plot(numpy.log(Mpa), numpy.log(r2['yhat'][2000 + i, :]), '-*')
-plt.title('')
-plt.xlabel('log(Mpa)')
-plt.ylabel('log(minimum_slope)')
+seaborn.distplot(r2['a'][2000:])
+plt.xlabel('"a" in log(min_slope) ~ a * log(Mpa) + b')
+plt.show()
+
+seaborn.distplot(r2['b'][2000:])
+plt.xlabel('"b" in log(min_slope) ~ a * log(Mpa) + b')
 plt.show()
 
 seaborn.distplot(r2['sigma'][2000:])
 plt.show()
 #%%
-hist = numpy.zeros((100, 100))
-
-a1 = r2['a'][2000:].mean()
-b1 = r2['b'][2000:].mean()
-u = a1 * numpy.log(Mpa) + b1
-sigma = r2['sigma'][2000:].mean()
-        
-for i, b in enumerate(numpy.linspace(-19.0, -17.5, 100)):#min(r2['b'][2000:]), max(r2['b'][2000:])
-    for j, a in enumerate(numpy.linspace(1.0, 5.0, 100)):
-        hist[i, j] = numpy.exp(sum(numpy.log([scipy.stats.norm.pdf(v1, u1, sigma) for v1, u1 in zip(a * (numpy.log(Mpa) - numpy.log(Mpa[0])) + b, u)])))
-
-plt.imshow(hist, cmap = plt.cm.jet, interpolation = 'NONE')
-plt.colorbar()
-plt.show()
-#%%
-avs = numpy.linspace(1.0, 5.0, 100)
-ps = hist[:, :].sum(axis = 0)
-ps /= sum(ps)
-
-plt.plot(avs, ps2)
-plt.plot(avs, ps)
-plt.title('PDF of slopes')
-plt.xlabel('"a" in log(min_slope) ~ a * log(Mpa) + b')
-plt.legend(['Computed w/ linear fit', 'Polynomial fit'])
-plt.show()
-#%%
-ps2 = numpy.array(ps)
-#%%
-seaborn.
-#%%
 r['yhat1'][2000 + i, :164]
 #%%r['yhat1'][2000 + i, :164]
 #a[l] * t[s : se] + b[l]
-a = numpy.concatenate([((r['a'][2000 + i, 2] * data3[:, 0] + r['b'][2000 + i, 2]) - data3[:, 1])[len(data1) / 2:] for i in range(100, 110)])
+a = numpy.concatenate([(r['a'][2000 + i, 0] * data1[:, 0] + r['b'][2000 + i, 0]) - data1[:, 1] for i in range(100, 110)])
 
-for dist_name in ['norm']:#[ 'alpha', 'anglit', 'arcsine', 'beta', 'betaprime', 'bradford', 'burr', 'cauchy', 'chi', 'chi2', 'cosine', 'dgamma', 'dweibull', 'erlang', 'expon', 'exponweib', 'exponpow', 'f', 'fatiguelife', 'fisk', 'foldcauchy', 'foldnorm', 'frechet_r', 'frechet_l', 'genlogistic', 'genpareto', 'genexpon', 'genextreme', 'gausshyper', 'gamma', 'gengamma', 'genhalflogistic', 'gilbrat', 'gompertz', 'gumbel_r', 'gumbel_l', 'halfcauchy', 'halflogistic', 'halfnorm', 'hypsecant', 'invgamma', 'invgauss', 'invweibull', 'johnsonsb', 'johnsonsu', 'ksone', 'kstwobign', 'laplace', 'logistic', 'loggamma', 'loglaplace', 'lognorm', 'lomax', 'maxwell', 'mielke', 'nakagami', 'ncx2', 'ncf', 'nct', 'norm', 'pareto', 'pearson3', 'powerlaw', 'powerlognorm', 'powernorm', 'rdist', 'reciprocal', 'rayleigh', 'rice', 'recipinvgauss', 'semicircular', 't', 'triang', 'truncexpon', 'truncnorm', 'tukeylambda', 'uniform', 'vonmises', 'wald', 'weibull_min', 'weibull_max', 'wrapcauchy']:
+for dist_name in ['norm', 'cauchy', 'laplace', 'gumbel_r']:#[ 'alpha', 'anglit', 'arcsine', 'beta', 'betaprime', 'bradford', 'burr', 'cauchy', 'chi', 'chi2', 'cosine', 'dgamma', 'dweibull', 'erlang', 'expon', 'exponweib', 'exponpow', 'f', 'fatiguelife', 'fisk', 'foldcauchy', 'foldnorm', 'frechet_r', 'frechet_l', 'genlogistic', 'genpareto', 'genexpon', 'genextreme', 'gausshyper', 'gamma', 'gengamma', 'genhalflogistic', 'gilbrat', 'gompertz', 'gumbel_r', 'gumbel_l', 'halfcauchy', 'halflogistic', 'halfnorm', 'hypsecant', 'invgamma', 'invgauss', 'invweibull', 'johnsonsb', 'johnsonsu', 'ksone', 'kstwobign', 'laplace', 'logistic', 'loggamma', 'loglaplace', 'lognorm', 'lomax', 'maxwell', 'mielke', 'nakagami', 'ncx2', 'ncf', 'nct', 'norm', 'pareto', 'pearson3', 'powerlaw', 'powerlognorm', 'powernorm', 'rdist', 'reciprocal', 'rayleigh', 'rice', 'recipinvgauss', 'semicircular', 't', 'triang', 'truncexpon', 'truncnorm', 'tukeylambda', 'uniform', 'vonmises', 'wald', 'weibull_min', 'weibull_max', 'wrapcauchy']:
     seaborn.distplot(a, fit = getattr(scipy.stats, dist_name), kde = False)
     plt.title(dist_name)
     plt.show()
