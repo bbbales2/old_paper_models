@@ -259,23 +259,29 @@ data {
 }
 
 parameters {
-  real<lower=0.0> sigma;
+  //real<lower=0.0> sigma;
   real a;
   real b;
+
+  real u[L];
+  real<lower=0.0> sigmau[L];
 }
 
 model {
   for (l in 1:L)
   {
-    y[l] ~ lognormal(a * Mpa[l] + b, sigma);
+    y[l] ~ lognormal(u[l], sigmau[l]);
   }
+
+  u ~ normal(a * Mpa + b, mean(sigmau));
 }
 
 generated quantities {
+  vector[L] uhat;
   vector[L] yhat;
 
   for (l in 1:L)
-    yhat[l] <- lognormal_rng(a * Mpa[l] + b, sigma);
+    yhat[l] <- normal_rng(a * Mpa[l] + b, mean(sigmau));
 }
 """
 
@@ -325,7 +331,7 @@ for l in range(3):
 print numpy.log(slopes).mean(axis = 0)
 print numpy.log(slopes).std(axis = 0)
 #%%
-slopes = r['a'][3000:]
+slopes = r['a'][3800:]
 
 print numpy.log(slopes).mean(axis = 0)
 print numpy.log(slopes).std(axis = 0)
@@ -338,7 +344,7 @@ fit2 = sm2.sampling(data = {
   'L' : slopes.shape[1],
   'Mpa' : lMpa
 })
-
+#%%
 r2 = fit2.extract()
 
 seaborn.distplot(r2['a'][3000:])
@@ -349,12 +355,18 @@ plt.show()
 seaborn.distplot(r2['b'][3000:])
 plt.xlabel('"b" in log(min_slope) ~ a * log(Mpa) + b')
 plt.show()
+
+print numpy.log(slopes).mean(axis = 0)
+print numpy.log(slopes).std(axis = 0)
+
+print r2['u'][3000:].mean(axis = 0)
+print r2['sigmau'][3000:].mean(axis = 0)
 #%%
 bp = plt.boxplot(numpy.log(slopes))
 plt.setp(bp['boxes'], color='green')
 plt.setp(bp['whiskers'], color='green')
 plt.setp(bp['fliers'], marker='None')
-bp = plt.boxplot(numpy.log(r2['yhat'][3500:, :]))
+bp = plt.boxplot(numpy.log(r2['yhat'][3000:, :]))
 plt.setp(bp['boxes'], color='black')
 plt.setp(bp['whiskers'], color='black')
 plt.setp(bp['fliers'], marker='None')
