@@ -96,6 +96,8 @@ generated quantities {
   vector[N] yhat1m;
   vector[N] yhat2m;
   vector[N] yhat3m;
+  vector[N] yhat1f[L];
+  vector[N] yhat2f[L];
 
   real ti[L];
   real yi[L];
@@ -112,11 +114,17 @@ generated quantities {
     for (j in s:se)
       yhat1[j] <- normal_rng(a[l] * t[j] + b[l], sigma1[l]);
 
+    for (j in 1:N)
+      yhat1f[l][j] <- normal_rng(a[l] * t[j] + b[l], sigma1[l]);
+
     yhat1m[s : se] <- a[l] * t[s : se] + b[l];
 
     trange <- t[s : se] - t[s];
     for (j in s:se)
       yhat2[j] <- normal_rng(C[l] * (trange[j - s + 1] / p[l]) ./ (1 + trange[j - s + 1] / p[l]) + em[l] * trange[j - s + 1] + e0[l], sigma2[l]);
+
+    for (j in 1:N)
+      yhat2f[l][j] <- normal_rng(C[l] * ((t[j] - t[s]) / p[l]) ./ (1 + (t[j] - t[s]) / p[l]) + em[l] * (t[j] - t[s]) + e0[l], sigma2[l]);
 
     yhat2m[s : se] <- C[l] * (trange / p[l]) ./ (1 + trange / p[l]) + em[l] * trange + e0[l];
 
@@ -176,6 +184,20 @@ plt.title('Green linear fit, Red polynomial fit, Blue initial slope of polynomia
 plt.gcf().set_size_inches((15, 9))
 plt.show()
 #%%
+
+idxs = numpy.random.choice(range(2000), 20)
+plt.plot(data[:, 0], data[:, 1], '*')
+for i in idxs:
+    plt.plot(data[:, 0], r['yhat1f'][2000 + i, 0, :], 'b', alpha = 0.1)
+    plt.plot(data[:, 0], r['yhat2f'][2000 + i, 0, :], 'g', alpha = 0.1)
+
+plt.ylim((0.0, 0.035))
+plt.xlabel('Time')
+plt.ylabel('e')
+plt.title('Difference in slopes in first bit of data')
+plt.gcf().set_size_inches((15, 9))
+plt.show()
+#%%
 #for i in idxs:
 #    plt.loglog(r['a'][2000 + i, :], r['Mpahat'][2000 + i, :], 'r')#%%Mpa
 #plt.show()
@@ -223,7 +245,7 @@ plt.show()
 for l in range(3):
     t = data[:, 0][Ss[l] + Ns[l] - 1] - data[:, 0][Ss[l]]
     plt.plot(r['a'][2000:, l], (r['C'][2000:, l] / r['p'][2000:, l]) / ((1 + t / r['p'][2000:, l])**2) + r['em'][2000:, l], '*')
-    plt.title('Comparison of maximum and minimum slopes for section {0}'.format(l))
+    plt.title('Comparison of different minimum slopes for section {0}'.format(l))
     plt.xlabel('Minimum slopes (from linear fit)')
     plt.ylabel('Minimum slopes (from polynomial fit)')
     plt.show()
@@ -310,7 +332,7 @@ print numpy.log(slopes).std(axis = 0)
 
 lMpa = numpy.log(Mpa)
 #%%
-fit2 = sm3.sampling(data = {
+fit2 = sm2.sampling(data = {
   'y' : slopes.transpose(),
   'N' : slopes.shape[0],
   'L' : slopes.shape[1],
@@ -321,7 +343,7 @@ r2 = fit2.extract()
 
 seaborn.distplot(r2['a'][3000:])
 plt.xlabel('"a" in log(min_slope) ~ a * log(Mpa) + b')
-plt.title('Slopes from the polynomial fit')
+#plt.title('Slopes from the polynomial fit')
 plt.show()
 
 seaborn.distplot(r2['b'][3000:])
