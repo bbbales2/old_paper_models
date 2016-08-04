@@ -79,7 +79,7 @@ model {
     int se;
 
     s <- Ss[l];
-    m <- Ss[l] + 3 * Ns[l] / 4;
+    m <- Ss[l] + 1 * Ns[l] / 2;
     se <- Ss[l] + Ns[l] - 1;
 
     y[m : se] ~ normal(a[l] * t[m : se] + b[l], sigma1[l]);
@@ -111,7 +111,7 @@ generated quantities {
 
     for (j in s:se)
       yhat1[j] <- normal_rng(a[l] * t[j] + b[l], sigma1[l]);
-        
+
     yhat1m[s : se] <- a[l] * t[s : se] + b[l];
 
     trange <- t[s : se] - t[s];
@@ -165,15 +165,15 @@ r = fit.extract()
 idxs = numpy.random.choice(range(2000), 20)
 plt.plot(data[:, 0], data[:, 1], '*')
 for i in idxs:
-    plt.plot(data[:, 0], r['yhat1m'][2000 + i, :], 'g', alpha = 0.1)
-    plt.plot(data[:, 0], r['yhat2m'][2000 + i, :], 'r', alpha = 0.1)
-    plt.plot(data[:, 0], r['yhat3m'][2000 + i, :], 'b', alpha = 0.1)
+    plt.plot(data[:, 0], r['yhat1'][2000 + i, :], 'g', alpha = 0.1)
+    plt.plot(data[:, 0], r['yhat2'][2000 + i, :], 'r', alpha = 0.1)
+    plt.plot(data[:, 0], r['yhat3'][2000 + i, :], 'b', alpha = 0.1)
 
 plt.ylim((0.0, 0.035))
 plt.xlabel('Time')
 plt.ylabel('e')
 plt.title('Green linear fit, Red polynomial fit, Blue initial slope of polynomial')
-plt.gcf().set_size_inches((16, 20))
+plt.gcf().set_size_inches((15, 9))
 plt.show()
 #%%
 #for i in idxs:
@@ -257,6 +257,9 @@ generated quantities {
 }
 """
 
+sm2 = pystan.StanModel(model_code = model_code)
+
+#%%
 model_code1 = """
 data {
   int<lower=1> N; // Number of single samples
@@ -268,12 +271,9 @@ data {
 parameters {
   real a;
   real b;
-  
+
   real u[L];
   real<lower=0.0> sigma[L];
-  
-  real au;
-  real<lower=0.0> asigma;
 }
 
 model {
@@ -281,7 +281,7 @@ model {
     y[l] ~ lognormal(u[l], sigma[l]);
 
   a * Mpa + b ~ normal(u, sigma);
-  
+
   //for (l in 1:L)
   //{
   //  for(n in 1:N)
@@ -292,26 +292,25 @@ model {
 }
 """
 
-sm2 = pystan.StanModel(model_code = model_code)
+sm3 = pystan.StanModel(model_code = model_code1)
 #%%
 slopes = numpy.zeros((1000, 3))
 
 for l in range(3):
     t = data[:, 0][Ss[l] + Ns[l] - 1] - data[:, 0][Ss[l]]
     slopes[:, l] = (r['C'][3000:, l] / r['p'][3000:, l]) / ((1 + t / r['p'][3000:, l])**2) + r['em'][3000:, l]
-    
+
 print numpy.log(slopes).mean(axis = 0)
 print numpy.log(slopes).std(axis = 0)
 #%%
 slopes = r['a'][3000:]
-    
+
 print numpy.log(slopes).mean(axis = 0)
 print numpy.log(slopes).std(axis = 0)
 
 lMpa = numpy.log(Mpa)
-lMpa -= lMpa[0]
 #%%
-fit2 = sm2.sampling(data = {
+fit2 = sm3.sampling(data = {
   'y' : slopes.transpose(),
   'N' : slopes.shape[0],
   'L' : slopes.shape[1],
@@ -320,12 +319,12 @@ fit2 = sm2.sampling(data = {
 
 r2 = fit2.extract()
 
-seaborn.distplot(r2['a'][2000:])
+seaborn.distplot(r2['a'][3000:])
 plt.xlabel('"a" in log(min_slope) ~ a * log(Mpa) + b')
 plt.title('Slopes from the polynomial fit')
 plt.show()
 
-seaborn.distplot(r2['b'][2000:])
+seaborn.distplot(r2['b'][3000:])
 plt.xlabel('"b" in log(min_slope) ~ a * log(Mpa) + b')
 plt.show()
 #%%
@@ -358,7 +357,7 @@ a1 = r2['a'][2000:].mean()
 b1 = r2['b'][2000:].mean()
 u = a1 * numpy.log(Mpa) + b1
 sigma = r2['sigma'][2000:].mean()
-        
+
 for i, b in enumerate(numpy.linspace(-19.0, -17.5, 100)):#min(r2['b'][2000:]), max(r2['b'][2000:])
     for j, a in enumerate(numpy.linspace(1.0, 5.0, 100)):
         hist[i, j] = numpy.exp(sum(numpy.log([scipy.stats.norm.pdf(v1, u1, sigma) for v1, u1 in zip(a * (numpy.log(Mpa) - numpy.log(Mpa[0])) + b, u)])))
