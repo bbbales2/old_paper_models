@@ -263,25 +263,26 @@ parameters {
   real a;
   real b;
 
+  real au;
+  real<lower=0.0> asigma;
+
   real u[L];
   real<lower=0.0> sigmau[L];
 }
 
 model {
+  sigmau ~ cauchy(0.0, 0.1);
+  //sigma ~ cauchy(0.0, 0.5);
+  asigma ~ cauchy(0.0, 1.0);
+
+  a ~ normal(au, asigma);
+
   for (l in 1:L)
   {
     y[l] ~ lognormal(u[l], sigmau[l]);
   }
 
-  u ~ normal(a * Mpa + b, mean(sigmau));
-}
-
-generated quantities {
-  vector[L] uhat;
-  vector[L] yhat;
-
-  for (l in 1:L)
-    yhat[l] <- normal_rng(a * Mpa[l] + b, mean(sigmau));
+  u ~ normal(a * Mpa + b, sigmau);
 }
 """
 
@@ -331,7 +332,7 @@ for l in range(3):
 print numpy.log(slopes).mean(axis = 0)
 print numpy.log(slopes).std(axis = 0)
 #%%
-slopes = r['a'][3800:]
+slopes = r['a'][3000:]
 
 print numpy.log(slopes).mean(axis = 0)
 print numpy.log(slopes).std(axis = 0)
@@ -344,7 +345,7 @@ fit2 = sm2.sampling(data = {
   'L' : slopes.shape[1],
   'Mpa' : lMpa
 })
-#%%
+
 r2 = fit2.extract()
 
 seaborn.distplot(r2['a'][3000:])
